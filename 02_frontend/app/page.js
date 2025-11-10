@@ -8,21 +8,28 @@ export default function Page() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    let isMounted = true; // ป้องกัน memory leak
+
     async function getAttractions() {
       try {
         const apiHost = process.env.NEXT_PUBLIC_API_HOST;
+        if (!apiHost) throw new Error("API host not defined");
         const res = await fetch(`${apiHost}/attractions`, { cache: "no-store" });
-        if (!res.ok) throw new Error("Failed to fetch");
+        if (!res.ok) throw new Error("Failed to fetch attractions");
         const data = await res.json();
-        setRows(data);
+        if (isMounted) setRows(data);
       } catch (err) {
-        setError(err.message);
+        if (isMounted) setError(err.message);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
 
     getAttractions();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   if (loading) {
@@ -44,12 +51,12 @@ export default function Page() {
   return (
     <main className="container">
       <header className="header">
-        <h1 className="title">thanapat panmee 6601968</h1>
-        <h1 className="title">Attractions</h1>
+        <h1 className="title">THANAPAT PANMEE 6601968</h1>
+        <h2 className="title">Attractions</h2>
         <p className="subtitle">Discover points of interest nearby</p>
       </header>
 
-      {!rows || rows.length === 0 ? (
+      {!rows?.length ? (
         <div className="empty">No attractions found.</div>
       ) : (
         <section className="grid" aria-live="polite">

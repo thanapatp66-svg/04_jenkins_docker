@@ -10,6 +10,7 @@ pipeline {
         // Build Information
         BUILD_TAG = "${env.BUILD_NUMBER}"
         GIT_COMMIT_SHORT = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+        COMPOSE_FILE = 'docker-compose.yml' // Docker Compose file path
     }
 
     parameters {
@@ -41,7 +42,17 @@ pipeline {
             steps {
                 script {
                     echo "Validating Docker Compose configuration..."
-                    sh 'docker compose config'
+                    sh "docker compose -f ${COMPOSE_FILE} config"
+                }
+            }
+        }
+
+        stage('Check Dockerfiles') {
+            steps {
+                script {
+                    if (!fileExists('01_api/Dockerfile')) error "❌ Missing Dockerfile for API"
+                    if (!fileExists('02_frontend/Dockerfile')) error "❌ Missing Dockerfile for Frontend"
+                    echo "✅ Dockerfiles found."
                 }
             }
         }
@@ -50,8 +61,6 @@ pipeline {
             steps {
                 script {
                     echo "Preparing environment configuration..."
-
-                    // Load credentials from Jenkins
                     withCredentials([
                         string(credentialsId: 'MYSQL_ROOT_PASSWORD', variable: 'MYSQL_ROOT_PASS'),
                         string(credentialsId: 'MYSQL_PASSWORD', variable: 'MYSQL_PASS')
@@ -73,10 +82,7 @@ API_HOST=${params.API_HOST}
 EOF
                         """
                     }
-
-                    echo "Environment configuration created"
-                    // Don't print .env to avoid exposing passwords in logs
-                    sh 'echo ".env file created successfully"'
+                    echo ".env file created successfully"
                 }
             }
         }
@@ -85,21 +91,18 @@ EOF
             steps {
                 script {
                     echo "Deploying to production using Docker Compose..."
-
-                    // Stop existing containers
-                    def downCommand = 'docker compose down'
+                    def downCommand = "docker compose -f ${COMPOSE_FILE} down"
                     if (params.CLEAN_VOLUMES) {
-                        echo "WARNING: Removing volumes (database will be cleared)"
-                        downCommand = 'docker compose down -v'
+                        echo "⚠️ Removing volumes (database will be cleared)"
+                        downCommand += " -v"
                     }
                     sh downCommand
 
                     // Build and start services
                     sh """
-                        docker compose build --no-cache
-                        docker compose up -d
+                        docker compose -f ${COMPOSE_FILE} build --no-cache
+                        docker compose -f ${COMPOSE_FILE} up -d
                     """
-
                     echo "Deployment completed"
                 }
             }
@@ -112,11 +115,7 @@ EOF
                     sh 'sleep 15'
 
                     echo "Performing health check..."
-
                     sh """
-                        # Check if containers are running
-                        docker compose ps
-
                         # Wait for API to be ready (max 60 seconds)
                         timeout 60 bash -c 'until curl -f http://localhost:3001/health; do sleep 2; done' || exit 1
 
@@ -133,14 +132,13 @@ EOF
             steps {
                 script {
                     echo "Verifying all services..."
-
                     sh """
                         echo "=== Container Status ==="
-                        docker compose ps
+                        docker compose -f ${COMPOSE_FILE} ps
 
                         echo ""
                         echo "=== Service Logs (last 20 lines) ==="
-                        docker compose logs --tail=20
+                        docker compose -f ${COMPOSE_FILE} logs --tail=20
 
                         echo ""
                         echo "=== Deployed Services ==="
@@ -167,20 +165,16 @@ EOF
 
         failure {
             echo "❌ Deployment failed!"
-
             script {
                 echo "Printing container logs for debugging..."
-                sh 'docker compose logs --tail=50 || true'
+                sh "docker compose -f ${COMPOSE_FILE} logs --tail=50 || true"
             }
         }
 
         always {
             echo "Cleaning up old Docker resources..."
             sh """
-                # Remove dangling images
                 docker image prune -f
-
-                # Remove old containers
                 docker container prune -f
             """
         }
